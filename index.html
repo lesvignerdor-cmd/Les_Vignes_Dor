@@ -1655,7 +1655,7 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
   function why1(e){
     if(e && e.http) return 'HTTP ' + e.status + (e.message && e.message.indexOf('HTTP') !== 0 ? ' – ' + e.message : '');
     if(e && e.name === 'AbortError') return 'timp depășit (serverul nu a răspuns)';
-    return 'conexiune blocată sau întreruptă';
+    return 'conexiune blocată sau întreruptă' + (e && e.message ? ' (' + (e.name || 'Error') + ': ' + e.message + ')' : '');
   }
   function mailtoHref(subject, lines){
     var body = lines.join('\n'); if(body.length > 1500) body = body.slice(0, 1500) + '…';
@@ -1885,26 +1885,24 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
     });
     return Promise.race([work, limit]);
   }
-  /* trimite fișierul ca atașament, printr-un formular ascuns (metoda documentată de FormSubmit pentru atașamente) */
+  /* POST „clasic" către FormSubmit (multipart/form-data, singurul mod documentat pentru atașamente); răspunsul e opac,
+     dar promisiunea reușește doar dacă serverul a răspuns și eșuează la lipsa conexiunii */
+  function postForm(fields, blob, fname, ms){
+    var fd = new FormData();
+    Object.keys(fields).forEach(function(k){ if(k !== '_honey') fd.append(k, fields[k]); });
+    if(blob) fd.append('attachment', blob, fname);
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var t = setTimeout(function(){ if(ctl) ctl.abort(); }, ms || 60000);
+    return fetch('https://formsubmit.co/' + TO, {method: 'POST', body: fd, mode: 'no-cors', signal: ctl ? ctl.signal : undefined})
+      .then(function(){ clearTimeout(t); }, function(e){ clearTimeout(t); throw e; });
+  }
+  function docName(o){ return 'Formular_comanda_' + o.ref + '.docx'; }
+  /* al doilea e-mail: doar formularul Word, atașat */
   function postDoc(blob, o){
-    try{
-      if(typeof File !== 'function' || typeof DataTransfer === 'undefined') return false;
-      var dt = new DataTransfer(); dt.items.add(new File([blob], 'Formular_comanda_' + o.ref + '.docx', {type: DOCX_MIME}));
-      var tname = 'lvdoc' + Date.now();
-      var ifr = el('iframe', {name: tname, title: 'trimitere document', tabindex: '-1', 'aria-hidden': 'true', style: 'display:none'});
-      var fm = el('form', {method: 'POST', action: 'https://formsubmit.co/' + TO, enctype: 'multipart/form-data', target: tname, style: 'display:none'});
-      var fields = [['_subject', 'Formular de comandă ' + o.ref + ' (Word) – ' + o.client], ['_template', 'table'], ['_captcha', 'false'],
-        ['Număr comandă', o.ref], ['Client', o.client], ['Total de plată', leiE(o.s.total)],
-        ['Mesaj', 'Formularul de comandă completat automat (Word) este în atașament. Datele comenzii sunt și în e-mailul cu același număr.'], ['email', o.email]];
-      fields.forEach(function(p){ fm.appendChild(el('input', {type: 'hidden', name: p[0], value: p[1]})); });
-      var fi = document.createElement('input'); fi.type = 'file'; fi.name = 'attachment'; fi.files = dt.files;
-      if(!fi.files || !fi.files.length) return false;
-      fm.appendChild(fi);
-      document.body.appendChild(ifr); document.body.appendChild(fm);
-      fm.submit();
-      setTimeout(function(){ try{ fm.remove(); ifr.remove(); }catch(e){} }, 180000);
-      return true;
-    }catch(e){ return false; }
+    var fields = {_subject: 'Formular de comandă ' + o.ref + ' (Word) – ' + o.client, _template: 'table', _captcha: 'false',
+      'Număr comandă': o.ref, Client: o.client, 'Total de plată': leiE(o.s.total),
+      Mesaj: 'Formularul de comandă completat automat (Word) este în atașament. Datele comenzii sunt și în e-mailul cu același număr.', email: o.email};
+    return postForm(fields, blob, docName(o)).then(function(){ return true; }, function(){ return false; });
   }
 
   function renderList(){
@@ -2081,15 +2079,21 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
       send.disabled = true; var old = send.textContent; send.textContent = 'Se trimite…';
       showStatus(status, 'ok', 'Se trimite comanda…', 'Poate dura până la un minut. Te rugăm să nu închizi fereastra.');
       try{ status.scrollIntoView({block: 'nearest', behavior: 'smooth'}); }catch(e){}
+      var docSent = false;
       sendMail(data).catch(function(e){
         if(e && e.http) return sendMail(simple).catch(function(e2){ e2.first = e; throw e2; });
-        throw e;
+        if(e && e.name === 'AbortError') throw e;
+        /* nu a existat niciun răspuns (conexiune/CORS): încercare de rezervă, un singur e-mail cu toate datele + formularul Word.
+           Dacă prima cerere ajunsese totuși, firma primește același număr de comandă de două ori. */
+        return Promise.race([docP, new Promise(function(r){ setTimeout(function(){ r(null); }, 8000); })]).then(function(b){
+          return postForm(data, b, docName(ord), 60000).then(function(){ docSent = true; });
+        }).catch(function(e2){ e.via = e2; throw e; });
       }).then(function(){
-        docP.then(function(b){ if(b) postDoc(b, ord); });
+        if(!docSent) docP.then(function(b){ if(b) postDoc(b, ord); });
         lastRef = ref; cart = {}; save(); updateBadge(); view = 'done'; render();
       }).catch(function(e){
         send.disabled = false; send.textContent = old;
-        var why = why1(e) + (e && e.first ? ' · prima încercare: ' + why1(e.first) : '');
+        var why = why1(e) + (e && e.first ? ' · prima încercare: ' + why1(e.first) : '') + (e && e.via ? ' · trimitere de rezervă: ' + why1(e.via) : '');
         var unsure = !(e && e.http);
         showStatus(status, 'err', unsure ? 'Nu am primit confirmare de la server.' : 'Nu am putut trimite automat comanda.',
           unsure ? 'Comanda ar putea totuși să fi ajuns la noi. Dacă nu primești un e-mail de confirmare în câteva minute, trimite-ne comanda direct pe e-mail:' : 'Încearcă din nou sau trimite-ne comanda direct pe e-mail:',
