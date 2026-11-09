@@ -504,6 +504,23 @@ body:has(#tab-contact.active) .fab-contact{display:none}
 .lang-switch button:focus-visible{outline:2px solid #fff;outline-offset:-3px}
 @media (max-width:640px){.lang-switch button{padding:.5em .7em;min-width:2.3em}}
 </style>
+<style id="mobile-header-css">
+/* ---------- Header pe telefon: două rânduri (brand + selector limbă / navigare între categorii) ---------- */
+@media (max-width:720px){
+  :root{ --header-h:100px; }
+  .header-inner{ display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-rows:56px 42px; column-gap:10px; row-gap:0; align-items:center; padding:0 14px; }
+  .brand{ grid-column:1; grid-row:1; gap:10px; min-width:0; }
+  .brand-mark{ width:40px; height:40px; }
+  .brand-word{ font-size:1.12rem; white-space:nowrap; }
+  .lang-switch{ grid-column:2; grid-row:1; justify-self:end; }
+  .main-nav{ grid-column:1 / -1; grid-row:2; align-self:stretch; width:calc(100% + 28px); margin:0 -14px; border-top:1px solid var(--line); -webkit-overflow-scrolling:touch; overscroll-behavior-x:contain; mask-image:linear-gradient(90deg,transparent 0,#000 12px,#000 calc(100% - 26px),transparent 100%); -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 12px,#000 calc(100% - 26px),transparent 100%); }
+  .main-nav ul{ width:max-content; min-width:100%; padding:0 12px; align-items:center; height:100%; }
+  .main-nav li{ display:flex; align-items:center; }
+  .main-nav button{ font-size:1.02rem; padding:10px 11px; min-height:40px; }
+  .main-nav button::after{ left:11px; right:11px; bottom:3px; }
+  .main-nav button.nav-hl{ padding:6px 14px; margin:0 4px; }
+}
+</style>
 </head>
 <body>
 
@@ -1516,6 +1533,18 @@ body:has(#tab-contact.active) .fab-contact{display:none}
   try{ var q = /[?&]lang=(en|ro)\b/.exec(window.location.search); if(q) start = q[1]; else start = localStorage.getItem(KEY) || 'ro'; }catch(e){}
   if(start === 'en') setLang('en', false);
   window.LVDO_setLang = setLang;
+})();
+</script>
+<script id="mobile-nav-js">
+/* La încărcare, pe telefon, aduce în vizor butonul filei active din meniul care derulează orizontal */
+(function(){
+  function centerActive(){
+    var nav = document.querySelector('.main-nav'); if(!nav) return;
+    var b = nav.querySelector('button[aria-selected="true"]'); if(!b || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollLeft = Math.max(0, b.offsetLeft - (nav.clientWidth - b.offsetWidth) / 2);
+  }
+  window.addEventListener('load', function(){ setTimeout(centerActive, 150); });
+  window.addEventListener('resize', centerActive);
 })();
 </script>
 </body>
