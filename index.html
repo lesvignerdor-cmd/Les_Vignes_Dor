@@ -1627,9 +1627,9 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
   function lang(){ return document.documentElement.getAttribute('lang') === 'en' ? 'en' : 'ro'; }
 
   /* ---------------- trimitere e-mail ---------------- */
-  function sendMail(payload){
+  function sendMail(payload, ms){
     var ctl = ('AbortController' in window) ? new AbortController() : null;
-    var timer = setTimeout(function(){ if(ctl) ctl.abort(); }, 20000);
+    var timer = setTimeout(function(){ if(ctl) ctl.abort(); }, ms || 20000);
     return fetch(ENDPOINT, {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
@@ -1644,6 +1644,18 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
         return j;
       });
     }, function(e){ clearTimeout(timer); throw e; });
+  }
+  /* curăță textele introduse de client: fără caractere de control; „--", „---" devin o liniuță lungă, iar un câmp cu doar liniuțe devine „—" */
+  function cl(v){
+    v = String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').trim();
+    v = v.replace(/[-\u2010-\u2015]{2,}/g, '\u2013');
+    if(/^[-\u2010-\u2015\s]+$/.test(v)) v = '\u2014';
+    return v;
+  }
+  function why1(e){
+    if(e && e.http) return 'HTTP ' + e.status + (e.message && e.message.indexOf('HTTP') !== 0 ? ' – ' + e.message : '');
+    if(e && e.name === 'AbortError') return 'timp depășit (serverul nu a răspuns)';
+    return 'conexiune blocată sau întreruptă';
   }
   function mailtoHref(subject, lines){
     var body = lines.join('\n'); if(body.length > 1500) body = body.slice(0, 1500) + '…';
@@ -1667,12 +1679,12 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
       var f = cf.elements;
       if(f._honey && f._honey.value){ showStatus(cfStatus, 'ok', 'Mesajul a fost trimis!', 'Mulțumim! Îți răspundem în cel mai scurt timp.'); return; }
       var data = {
-        _subject: 'Mesaj nou de pe site – ' + f.name.value.trim(),
+        _subject: 'Mesaj nou de pe site – ' + cl(f.name.value),
         _template: 'table', _captcha: 'false',
         _autoresponse: 'Mulțumim că ne-ai scris! Am primit mesajul tău și îți răspundem în cel mai scurt timp.\n\nEchipa F.E. Les Vignes d’Or S.R.L.\nGust deplin, vin divin.',
         Tip: 'Mesaj din formularul de contact',
-        Nume: f.name.value.trim(), email: f.email.value.trim(), Telefon: f.phone.value.trim() || '—',
-        Subiect: f.subject.value, Mesaj: f.message.value.trim(), 'Limba site-ului': lang().toUpperCase(), _honey: ''
+        Nume: cl(f.name.value), email: f.email.value.trim(), Telefon: cl(f.phone.value) || '—',
+        Subiect: f.subject.value, Mesaj: cl(f.message.value), 'Limba site-ului': lang().toUpperCase(), _honey: ''
       };
       cfBtn.disabled = true; var old = cfBtn.textContent; cfBtn.textContent = 'Se trimite…';
       sendMail(data).then(function(){
@@ -1933,7 +1945,7 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
       var firm = f.ctype.value === T_FIRM, ls = orderLines(), s = sums(), d = new Date();
       var ref = 'LV-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + (100 + Math.floor(Math.random() * 900));
       var dstr = pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear();
-      var client = f.name.value.trim(), ship = f.mode.value === M_SHIP;
+      var client = cl(f.name.value), ship = f.mode.value === M_SHIP;
       var when = f.when.value ? f.when.value.split('-').reverse().join('.') : '—';
       var data = {
         _subject: 'Comandă nouă ' + ref + ' – ' + client + ' – ' + leiE(s.total),
@@ -1946,18 +1958,18 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
       data['Număr comandă'] = ref; data['Din data'] = dstr;
       data['Tip client'] = f.ctype.value; data['Client'] = client;
       if(firm){
-        data['Nr Reg Com'] = f.reg.value.trim() || '—'; data['CIF'] = f.cif.value.trim(); data['Sediul'] = f.seat.value.trim() || '—';
-        data['Județ'] = f.county.value.trim() || '—'; data['Banca'] = f.bank.value.trim() || '—'; data['Cont IBAN'] = f.iban.value.trim() || '—';
-        data['Persoană de contact'] = f.contact.value.trim() || '—';
+        data['Nr Reg Com'] = cl(f.reg.value) || '—'; data['CIF'] = cl(f.cif.value); data['Sediul'] = cl(f.seat.value) || '—';
+        data['Județ'] = cl(f.county.value) || '—'; data['Banca'] = cl(f.bank.value) || '—'; data['Cont IBAN'] = cl(f.iban.value) || '—';
+        data['Persoană de contact'] = cl(f.contact.value) || '—';
       }
-      data['Telefon'] = f.phone.value.trim(); data['email'] = f.email.value.trim();
+      data['Telefon'] = cl(f.phone.value); data['email'] = f.email.value.trim();
       ls.forEach(function(l){ data['Poziția ' + l.n] = lineText(l); });
       data['Valoare fără TVA'] = leiE(s.net); data['Cota TVA'] = VAT + '%'; data['Valoare TVA'] = leiE(s.vat); data['TOTAL DE PLATĂ'] = leiE(s.total);
       data['Modalitate de livrare'] = ship ? 'Livrare la adresa' : 'Ridicare de la crama din Tohani';
-      data['Adresa de livrare'] = ship ? f.address.value.trim() : '—';
+      data['Adresa de livrare'] = ship ? cl(f.address.value) : '—';
       data['Data dorită pentru livrare sau eveniment'] = when;
       data['Modalitate de plată'] = f.pay.value;
-      data['Observații și mențiuni'] = f.notes.value.trim() || '—';
+      data['Observații și mențiuni'] = cl(f.notes.value) || '—';
       if(f.age) data['Majorat confirmat 18 ani'] = 'Da';
       data['Limba site-ului'] = lang().toUpperCase(); data._honey = '';
       var extra = [];
@@ -1976,13 +1988,12 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
       };
       send.disabled = true; var old = send.textContent; send.textContent = 'Se trimite…';
       sendMail(data).catch(function(e){
-        if(e && e.http) return sendMail(simple).catch(function(e2){ e2.first = e; throw e2; });
-        throw e;
+        return sendMail(simple, 15000).catch(function(e2){ e2.first = e; throw e2; });
       }).then(function(){
         lastRef = ref; cart = {}; save(); updateBadge(); view = 'done'; render();
       }).catch(function(e){
         send.disabled = false; send.textContent = old;
-        var why = (e && e.http) ? ('HTTP ' + e.status + (e.message && e.message.indexOf('HTTP') !== 0 ? ' – ' + e.message : '')) : 'fără răspuns de la server (conexiune)';
+        var why = why1(e) + (e && e.first ? ' · prima încercare: ' + why1(e.first) : '');
         showStatus(status, 'err', 'Nu am putut trimite automat comanda.', 'Încearcă din nou sau trimite-ne comanda direct pe e-mail:',
           mailtoHref(data._subject, ['Formular de comandă nr. ' + ref + ' din ' + dstr, 'Client: ' + client + ' (' + f.ctype.value + ')'].concat(firm ? ['CIF: ' + data['CIF']] : [],
             ['Telefon: ' + data.Telefon, 'E-mail: ' + data.email, 'Livrare: ' + data['Modalitate de livrare'] + (ship ? ' – ' + data['Adresa de livrare'] : ''), 'Plată: ' + data['Modalitate de plată'], 'Observații: ' + data['Observații și mențiuni'], '', 'Produse:'],
