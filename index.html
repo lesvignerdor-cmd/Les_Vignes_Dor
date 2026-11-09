@@ -1855,7 +1855,7 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
   function renderForm(){
     clear(body); clear(foot);
     var T_PF = 'Persoană fizică', T_FIRM = 'Firmă', M_PICK = 'Ridicare de la crama din Tohani', M_SHIP = 'Livrare la adresa';
-    var typeBox = radios('Tip client', 'ctype', [T_PF, T_FIRM], T_PF, true);
+    var typeBox = radios('Tip client', 'ctype', [T_FIRM, T_PF], T_FIRM, true);
     var inName = el('input', {id: 'of-name', name: 'name', type: 'text', autocomplete: 'name', required: '', maxlength: '120'});
     var nameBox = field('Nume și prenume', inName, true);
     var inReg = el('input', {id: 'of-reg', name: 'reg', type: 'text', autocomplete: 'off', maxlength: '40'});
