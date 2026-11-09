@@ -1824,6 +1824,89 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
     return 'Cod ' + l.code + ' – ' + l.name + (l.um ? ' – U.M.: ' + l.um : '') + ' – Cantitate: ' + l.qty + ' – Preț unitar: ' + leiE(l.unit) + ' – Valoare: ' + leiE(l.val);
   }
 
+  /* ——— Formularul de comandă Word (.docx), completat automat și atașat unui e-mail separat ——— */
+  var DOCX_URL = 'comanda/formular-comanda.docx', ZIP_URL = 'comanda/jszip.min.js';
+  var DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  function xesc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function loadZip(){
+    if(window.JSZip) return Promise.resolve(window.JSZip);
+    return new Promise(function(res, rej){
+      var s = document.createElement('script'); s.src = ZIP_URL;
+      s.onload = function(){ window.JSZip ? res(window.JSZip) : rej(new Error('JSZip lipsă')); };
+      s.onerror = function(){ rej(new Error('JSZip nu s-a încărcat')); };
+      document.head.appendChild(s);
+    });
+  }
+  /* înlocuiește câmpurile {{...}} din șablon; peste 8 produse se adaugă rânduri noi în tabel */
+  function docxXml(xml, map, n){
+    if(n > 8){
+      var at = xml.indexOf('{{cod8}}'), head = xml.slice(0, at);
+      var s = Math.max(head.lastIndexOf('<w:tr '), head.lastIndexOf('<w:tr>')), e = xml.indexOf('</w:tr>', at) + 7;
+      var row = xml.slice(s, e), more = '';
+      for(var i = 9; i <= n; i++){
+        var r = row.replace(/\{\{([a-z]+)8\}\}/g, '{{$1' + i + '}}').replace('<w:t>8</w:t>', '<w:t>' + i + '</w:t>');
+        if(i % 2) r = r.replace(/F8F0E0/g, 'FFFDF8');
+        more += r;
+      }
+      xml = xml.slice(0, e) + more + xml.slice(e);
+    }
+    return xml.replace(/\{\{(\w+)\}\}/g, function(m, k){ return xesc(map[k] == null ? '' : map[k]).replace(/\r?\n/g, '</w:t><w:br/><w:t xml:space="preserve">'); });
+  }
+  function docxMap(o){
+    var BOX = '☐', X = '☒', na = '—';
+    var m = {
+      nr: o.ref, data: o.dstr.replace(/\./g, ' / '), client: o.client,
+      regcom: o.firm ? o.reg : na, cif: o.firm ? o.cif : na, sediu: o.firm ? o.seat : na, judet: o.firm ? o.county : na,
+      banca: o.firm ? o.bank : na, iban: o.firm ? o.iban : na, contact: o.firm ? o.contact : na,
+      contactdata: o.phone + ' / ' + o.email, obs: o.notes,
+      faratva: leiE(o.s.net), tva: leiE(o.s.vat), total: leiE(o.s.total),
+      ck1: o.ship ? BOX : X, ck2: o.ship ? X : BOX,
+      adresa: o.ship ? o.address : '', datal: o.when,
+      ck3: o.pay === 'Ordin de plată' ? X : BOX, ck4: o.pay === 'Numerar' ? X : BOX, ck5: o.pay === 'Card' ? X : BOX
+    };
+    o.ls.forEach(function(l){
+      /* U.M. scurt în tabel (sticlă, borcan, pachet…); mărimea (0,75 l, 250 g) rămâne în denumire */
+      var sp = String(l.um || '').split(' '), size = sp.slice(1).join(' ');
+      m['cod' + l.n] = l.code; m['den' + l.n] = l.name + (size ? ' (' + size + ')' : ''); m['um' + l.n] = sp[0]; m['cant' + l.n] = String(l.qty);
+      m['pu' + l.n] = money(l.unit); m['val' + l.n] = money(l.val);
+    });
+    return m;
+  }
+  /* produce fișierul .docx (Blob) din șablonul formularului; durează sub o secundă */
+  function buildDocx(o){
+    var limit = new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('docx: timp depășit')); }, 25000); });
+    var work = Promise.all([loadZip(), fetch(DOCX_URL).then(function(r){ if(!r.ok) throw new Error('șablon HTTP ' + r.status); return r.arrayBuffer(); })]).then(function(a){
+      return a[0].loadAsync(a[1]).then(function(zip){
+        return zip.file('word/document.xml').async('string').then(function(xml){
+          zip.file('word/document.xml', docxXml(xml, docxMap(o), o.ls.length));
+          return zip.generateAsync({type: 'blob', compression: 'DEFLATE', mimeType: DOCX_MIME});
+        });
+      });
+    });
+    return Promise.race([work, limit]);
+  }
+  /* trimite fișierul ca atașament, printr-un formular ascuns (metoda documentată de FormSubmit pentru atașamente) */
+  function postDoc(blob, o){
+    try{
+      if(typeof File !== 'function' || typeof DataTransfer === 'undefined') return false;
+      var dt = new DataTransfer(); dt.items.add(new File([blob], 'Formular_comanda_' + o.ref + '.docx', {type: DOCX_MIME}));
+      var tname = 'lvdoc' + Date.now();
+      var ifr = el('iframe', {name: tname, title: 'trimitere document', tabindex: '-1', 'aria-hidden': 'true', style: 'display:none'});
+      var fm = el('form', {method: 'POST', action: 'https://formsubmit.co/' + TO, enctype: 'multipart/form-data', target: tname, style: 'display:none'});
+      var fields = [['_subject', 'Formular de comandă ' + o.ref + ' (Word) – ' + o.client], ['_template', 'table'], ['_captcha', 'false'],
+        ['Număr comandă', o.ref], ['Client', o.client], ['Total de plată', leiE(o.s.total)],
+        ['Mesaj', 'Formularul de comandă completat automat (Word) este în atașament. Datele comenzii sunt și în e-mailul cu același număr.'], ['email', o.email]];
+      fields.forEach(function(p){ fm.appendChild(el('input', {type: 'hidden', name: p[0], value: p[1]})); });
+      var fi = document.createElement('input'); fi.type = 'file'; fi.name = 'attachment'; fi.files = dt.files;
+      if(!fi.files || !fi.files.length) return false;
+      fm.appendChild(fi);
+      document.body.appendChild(ifr); document.body.appendChild(fm);
+      fm.submit();
+      setTimeout(function(){ try{ fm.remove(); ifr.remove(); }catch(e){} }, 180000);
+      return true;
+    }catch(e){ return false; }
+  }
+
   function renderList(){
     clear(body); clear(foot);
     var ids = Object.keys(cart);
@@ -1988,6 +2071,13 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
         Total: 'Valoare fără TVA ' + leiE(s.net) + ' + TVA ' + VAT + '% ' + leiE(s.vat) + ' = TOTAL DE PLATĂ ' + leiE(s.total),
         'Limba site-ului': data['Limba site-ului'], _honey: ''
       };
+      var nt = data['Observații și mențiuni'] === '\u2014' ? '' : data['Observații și mențiuni'];
+      if(f.age) nt += (nt ? ' | ' : '') + 'Majorat confirmat (18 ani)';
+      var ord = {ref: ref, dstr: dstr, client: client, firm: firm, reg: data['Nr Reg Com'], cif: data['CIF'], seat: data['Sediul'], county: data['Județ'],
+        bank: data['Banca'], iban: data['Cont IBAN'], contact: data['Persoană de contact'], phone: data.Telefon, email: data.email, notes: nt,
+        ship: ship, address: data['Adresa de livrare'], when: when === '\u2014' ? '' : when, pay: f.pay.value, ls: ls, s: s};
+      /* formularul Word se completează în paralel; dacă ceva nu merge, comanda pleacă oricum prin e-mailul principal */
+      var docP = buildDocx(ord).catch(function(){ return null; });
       send.disabled = true; var old = send.textContent; send.textContent = 'Se trimite…';
       showStatus(status, 'ok', 'Se trimite comanda…', 'Poate dura până la un minut. Te rugăm să nu închizi fereastra.');
       try{ status.scrollIntoView({block: 'nearest', behavior: 'smooth'}); }catch(e){}
@@ -1995,6 +2085,7 @@ body:has(#tab-contact.active) .cart-fab{bottom:calc(18px + env(safe-area-inset-b
         if(e && e.http) return sendMail(simple).catch(function(e2){ e2.first = e; throw e2; });
         throw e;
       }).then(function(){
+        docP.then(function(b){ if(b) postDoc(b, ord); });
         lastRef = ref; cart = {}; save(); updateBadge(); view = 'done'; render();
       }).catch(function(e){
         send.disabled = false; send.textContent = old;
